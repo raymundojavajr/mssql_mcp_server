@@ -1,25 +1,28 @@
-import pymssql
+import pyodbc
+import os
+from dotenv import load_dotenv
 
-config = {
-    "server": "{DB Server}}",
-    "user": "{SQL account}}",
-    "password": "{SQL password}",
-    "database": "{DB Name}}"
-}
+load_dotenv()
+
+print("Attempting to connect via pyodbc...")
 
 try:
-    print("Attempting to connect to SQL Server...")
-    conn = pymssql.connect(**config)
+    conn = pyodbc.connect(
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={os.getenv('MSSQL_SERVER')};"
+        f"DATABASE={os.getenv('MSSQL_DATABASE')};"
+        f"UID={os.getenv('MSSQL_USER')};"
+        f"PWD={os.getenv('MSSQL_PASSWORD')};"
+    )
+    print("✅ pyodbc connection successful!")
+
     cursor = conn.cursor()
-    print("Connection successful!")
-    
-    print("\nTesting query execution...")
     cursor.execute("SELECT TOP 1 * FROM INFORMATION_SCHEMA.TABLES")
     row = cursor.fetchone()
-    print(f"Query result: {row}")
-    
+    print(f"🧪 Query result: {row}")
+
     cursor.close()
     conn.close()
-    print("\nConnection test completed successfully!")
+    print("✅ Connection test completed successfully!")
 except Exception as e:
-    print(f"Error: {str(e)}")
+    print("❌ Error:", e)

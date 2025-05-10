@@ -1,10 +1,14 @@
 import asyncio
 import logging
 import os
-import pymssql
+import pyodbc
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.types import Resource, Tool, TextContent
 from pydantic import AnyUrl
+
+# Load .env
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -29,17 +33,26 @@ def get_db_config():
     
     return config
 
+def get_connection():
+    config = get_db_config()
+    conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={config['server']};"
+        f"DATABASE={config['database']};"
+        f"UID={config['user']};"
+        f"PWD={config['password']};"
+    )
+    return pyodbc.connect(conn_str)
+
 # Initialize server
 app = Server("mssql_mcp_server")
 
 @app.list_resources()
 async def list_resources() -> list[Resource]:
     """List SQL Server tables as resources."""
-    config = get_db_config()
     try:
-        conn = pymssql.connect(**config)
+        conn = get_connection()
         cursor = conn.cursor()
-        # Query to get user tables from the current database
         cursor.execute("""
             SELECT TABLE_NAME 
             FROM INFORMATION_SCHEMA.TABLES 
@@ -68,7 +81,6 @@ async def list_resources() -> list[Resource]:
 @app.read_resource()
 async def read_resource(uri: AnyUrl) -> str:
     """Read table contents."""
-    config = get_db_config()
     uri_str = str(uri)
     logger.info(f"Reading resource: {uri_str}")
     
@@ -79,9 +91,8 @@ async def read_resource(uri: AnyUrl) -> str:
     table = parts[0]
     
     try:
-        conn = pymssql.connect(**config)
+        conn = get_connection()
         cursor = conn.cursor()
-        # Use TOP 100 for MSSQL (equivalent to LIMIT in MySQL)
         cursor.execute(f"SELECT TOP 100 * FROM {table}")
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -89,7 +100,6 @@ async def read_resource(uri: AnyUrl) -> str:
         cursor.close()
         conn.close()
         return "\n".join([",".join(columns)] + result)
-                
     except Exception as e:
         logger.error(f"Database error reading resource {uri}: {str(e)}")
         raise RuntimeError(f"Database error: {str(e)}")
@@ -118,7 +128,6 @@ async def list_tools() -> list[Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Execute SQL commands."""
-    config = get_db_config()
     logger.info(f"Calling tool: {name} with arguments: {arguments}")
     
     if name != "execute_sql":
@@ -129,20 +138,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         raise ValueError("Query is required")
     
     try:
-        conn = pymssql.connect(**config)
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(query)
-        
-        # Special handling for table listing
+
         if query.strip().upper().startswith("SELECT") and "INFORMATION_SCHEMA.TABLES" in query.upper():
             tables = cursor.fetchall()
-            result = ["Tables_in_" + config["database"]]  # Header
+            result = ["Tables"]  # Header
             result.extend([table[0] for table in tables])
             cursor.close()
             conn.close()
             return [TextContent(type="text", text="\n".join(result))]
-        
-        # Regular SELECT queries
+
         elif query.strip().upper().startswith("SELECT"):
             columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
@@ -150,8 +157,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             cursor.close()
             conn.close()
             return [TextContent(type="text", text="\n".join([",".join(columns)] + result))]
-        
-        # Non-SELECT queries
+
         else:
             conn.commit()
             affected_rows = cursor.rowcount
